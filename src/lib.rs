@@ -936,6 +936,11 @@ impl BufferWriter {
         }
     }
 
+    /// Docs
+    pub fn file(fd: RawFd, choice: ColorChoice) -> BufferWriter {
+        BufferWriter::create(StandardStreamType::FileBuffered(fd), choice)
+    }
+
     /// Create a new `BufferWriter` that writes to stdout with the given
     /// color preferences.
     ///
