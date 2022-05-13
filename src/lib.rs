@@ -127,7 +127,10 @@ Currently, `termcolor` does not provide anything to do this for you.
 use std::env;
 use std::error;
 use std::fmt;
+use std::fs::File;
 use std::io::{self, Write};
+use std::os::unix::prelude::FromRawFd;
+use std::os::unix::prelude::RawFd;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(windows)]
@@ -300,11 +303,13 @@ enum StandardStreamType {
     Stderr,
     StdoutBuffered,
     StderrBuffered,
+    FileBuffered(RawFd),
 }
 
 enum IoStandardStream {
     Stdout(io::Stdout),
     Stderr(io::Stderr),
+    FileBuffered(io::BufWriter<File>),
     StdoutBuffered(io::BufWriter<io::Stdout>),
     StderrBuffered(io::BufWriter<io::Stderr>),
 }
@@ -326,6 +331,11 @@ impl IoStandardStream {
                 let wtr = io::BufWriter::new(io::stderr());
                 IoStandardStream::StderrBuffered(wtr)
             }
+            StandardStreamType::FileBuffered(fd) => {
+                let file = unsafe { File::from_raw_fd(fd) };
+                let wtr = io::BufWriter::new(file);
+                IoStandardStream::FileBuffered(wtr)
+            }
         }
     }
 
@@ -338,7 +348,8 @@ impl IoStandardStream {
                 IoStandardStreamLock::StderrLock(s.lock())
             }
             IoStandardStream::StdoutBuffered(_)
-            | IoStandardStream::StderrBuffered(_) => {
+            | IoStandardStream::StderrBuffered(_)
+            | IoStandardStream::FileBuffered(_) =>  {
                 // We don't permit this case to ever occur in the public API,
                 // so it's OK to panic.
                 panic!("cannot lock a buffered standard stream")
@@ -355,6 +366,7 @@ impl io::Write for IoStandardStream {
             IoStandardStream::Stderr(ref mut s) => s.write(b),
             IoStandardStream::StdoutBuffered(ref mut s) => s.write(b),
             IoStandardStream::StderrBuffered(ref mut s) => s.write(b),
+            IoStandardStream::FileBuffered(ref mut s) => s.write(b),
         }
     }
 
@@ -365,6 +377,7 @@ impl io::Write for IoStandardStream {
             IoStandardStream::Stderr(ref mut s) => s.flush(),
             IoStandardStream::StdoutBuffered(ref mut s) => s.flush(),
             IoStandardStream::StderrBuffered(ref mut s) => s.flush(),
+            IoStandardStream::FileBuffered(ref mut s) => s.flush(),
         }
     }
 }
@@ -521,6 +534,13 @@ impl<'a> StandardStreamLock<'a> {
 }
 
 impl BufferedStandardStream {
+
+    /// Docs
+    pub fn file(fd: RawFd, choice: ColorChoice) -> BufferedStandardStream {
+        let wtr =
+            WriterInner::create(StandardStreamType::FileBuffered(fd), choice);
+        BufferedStandardStream { wtr: LossyStandardStream::new(wtr) }
+    }
     /// Create a new `BufferedStandardStream` with the given color preferences
     /// that writes to standard output via a buffered writer.
     ///
